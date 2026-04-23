@@ -1,5 +1,7 @@
 # BlinkProof
 
+中文版本: [README_zh.md](./README_zh.md)
+
 **Don't trust -- Blink.**
 
 BlinkProof is a decentralized content provenance protocol built for the Solana Frontier Hackathon 2026. It targets the core authenticity problem created by generative AI: images and short-form media can now be produced, edited, and redistributed faster than viewers can verify where they came from.

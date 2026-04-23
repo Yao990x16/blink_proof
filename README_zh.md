@@ -1,5 +1,7 @@
 # BlinkProof
 
+English Version: [README.md](./README.md)
+
 **Don't trust -- Blink.**
 
 BlinkProof 是一个为 Solana Frontier Hackathon 2026 打造的去中心化内容溯源协议。它针对的是生成式 AI 带来的核心真实性问题：图像与短内容如今可以被高速生成、修改和传播，而普通用户几乎无法在同样快的速度下确认其来源是否可信。
