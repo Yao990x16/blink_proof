@@ -131,9 +131,22 @@ describe("blink_proof", () => {
     );
   });
 
-  it("registers content by appending a content hash into the Merkle tree", async () => {
+  it("Registers a content hash", async () => {
     const { merkleTree, treeAuthority } = await createInitializedTree();
-    const contentHash = Array.from(anchor.web3.Keypair.generate().publicKey.toBytes());
+    const contentHash = Buffer.from(
+      Array.from({ length: 32 }, (_, index) => index + 1)
+    );
+    let capturedEvent: {
+      creator: anchor.web3.PublicKey;
+      contentHash: number[];
+      timestamp: anchor.BN;
+    } | null = null;
+    const listenerId = await program.addEventListener(
+      "ContentRegistered",
+      (event) => {
+        capturedEvent = event as typeof capturedEvent;
+      }
+    );
 
     const beforeAccount = await provider.connection.getAccountInfo(
       merkleTree.publicKey
@@ -143,7 +156,7 @@ describe("blink_proof", () => {
     );
 
     const tx = await program.methods
-      .registerContent({ contentHash })
+      .registerContent({ contentHash: [...contentHash] })
       .accountsPartial({
         merkleTree: merkleTree.publicKey,
         treeAuthority,
@@ -152,6 +165,12 @@ describe("blink_proof", () => {
         logWrapper: SPL_NOOP_PROGRAM_ID,
       })
       .rpc();
+    const txDetails = await provider.connection.getTransaction(tx, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await program.removeEventListener(listenerId);
 
     const afterAccount = await provider.connection.getAccountInfo(
       merkleTree.publicKey
@@ -160,7 +179,16 @@ describe("blink_proof", () => {
       afterAccount!.data.readBigUInt64LE(SEQUENCE_NUMBER_OFFSET)
     );
 
+    console.log("registerContent signature:", tx);
+    console.log("registerContent slot:", txDetails?.slot ?? "unknown");
     expect(tx).to.be.a("string");
+    expect(txDetails).to.not.equal(null);
+    expect(capturedEvent).to.not.equal(null);
+    expect(capturedEvent?.creator.equals(provider.wallet.publicKey)).to.eq(true);
+    expect(Buffer.from(capturedEvent?.contentHash ?? [])).to.deep.equal(
+      contentHash
+    );
+    expect(capturedEvent?.timestamp.toNumber()).to.be.greaterThan(0);
     expect(afterSequence).to.eq(beforeSequence + 1);
   });
 });
