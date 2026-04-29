@@ -22,6 +22,7 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "0.32.1"
+spl-noop = { version = "1.0.0", features = ["no-entrypoint"] }
 
 
 [lints.rust]
