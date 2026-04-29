@@ -54,7 +54,7 @@ pub mod blink_proof {
     }
 
     pub fn register_content(
-        ctx: Context<RegisterContentAccounts>,
+        ctx: Context<RegisterContent>,
         args: RegisterContentArgs,
     ) -> Result<()> {
         let tree_key = ctx.accounts.merkle_tree.key();
@@ -76,6 +76,13 @@ pub mod blink_proof {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, &signer);
 
         spl_account_compression::cpi::append(cpi_ctx, args.content_hash)?;
+        let clock = Clock::get()?;
+
+        emit!(ContentRegistered {
+            creator: ctx.accounts.authority.key(),
+            content_hash: args.content_hash,
+            timestamp: clock.unix_timestamp,
+        });
 
         Ok(())
     }
@@ -103,13 +110,8 @@ pub struct InitializeTree<'info> {
     pub log_wrapper: UncheckedAccount<'info>,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct RegisterContentArgs {
-    pub content_hash: [u8; 32],
-}
-
 #[derive(Accounts)]
-pub struct RegisterContentAccounts<'info> {
+pub struct RegisterContent<'info> {
     /// CHECK: Compression-owned concurrent Merkle tree account.
     #[account(mut, owner = spl_account_compression::ID)]
     pub merkle_tree: UncheckedAccount<'info>,
@@ -131,6 +133,18 @@ pub struct RegisterContentAccounts<'info> {
     /// CHECK: Program address is validated by the constraint.
     #[account(address = spl_noop::id())]
     pub log_wrapper: UncheckedAccount<'info>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct RegisterContentArgs {
+    pub content_hash: [u8; 32],
+}
+
+#[event]
+pub struct ContentRegistered {
+    pub creator: Pubkey,
+    pub content_hash: [u8; 32],
+    pub timestamp: i64,
 }
 
 fn init_empty_merkle_tree_data(max_depth: u32, max_buffer_size: u32) -> Vec<u8> {
