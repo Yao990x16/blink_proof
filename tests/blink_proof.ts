@@ -2,6 +2,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { expect } from "chai";
 import { BlinkProof } from "../target/types/blink_proof";
+const blinkProofIdl = require("../target/idl/blink_proof.json");
 
 const SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = new anchor.web3.PublicKey(
   "cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK"
@@ -133,19 +134,11 @@ describe("blink_proof", () => {
 
   it("Registers a content hash", async () => {
     const { merkleTree, treeAuthority } = await createInitializedTree();
-    const contentHash = Buffer.from(
+    const saltedFingerprint = Buffer.from(
       Array.from({ length: 32 }, (_, index) => index + 1)
     );
-    let capturedEvent: {
-      creator: anchor.web3.PublicKey;
-      contentHash: number[];
-      timestamp: anchor.BN;
-    } | null = null;
-    const listenerId = await program.addEventListener(
-      "ContentRegistered",
-      (event) => {
-        capturedEvent = event as typeof capturedEvent;
-      }
+    const rawPhash = Buffer.from(
+      Array.from({ length: 8 }, (_, index) => 201 + index)
     );
 
     const beforeAccount = await provider.connection.getAccountInfo(
@@ -156,7 +149,7 @@ describe("blink_proof", () => {
     );
 
     const tx = await program.methods
-      .registerContent({ contentHash: [...contentHash] })
+      .registerContent([...saltedFingerprint], [...rawPhash])
       .accountsPartial({
         merkleTree: merkleTree.publicKey,
         treeAuthority,
@@ -169,8 +162,13 @@ describe("blink_proof", () => {
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await program.removeEventListener(listenerId);
+    const eventCoder = new anchor.BorshEventCoder(blinkProofIdl as anchor.Idl);
+    const contentRegistered = (txDetails?.meta?.logMessages ?? [])
+      .map((log) => {
+        const match = log.match(/^Program data: (.+)$/);
+        return match ? eventCoder.decode(match[1]) : null;
+      })
+      .find((event) => event?.name === "ContentRegistered");
 
     const afterAccount = await provider.connection.getAccountInfo(
       merkleTree.publicKey
@@ -183,12 +181,21 @@ describe("blink_proof", () => {
     console.log("registerContent slot:", txDetails?.slot ?? "unknown");
     expect(tx).to.be.a("string");
     expect(txDetails).to.not.equal(null);
-    expect(capturedEvent).to.not.equal(null);
-    expect(capturedEvent?.creator.equals(provider.wallet.publicKey)).to.eq(true);
-    expect(Buffer.from(capturedEvent?.contentHash ?? [])).to.deep.equal(
-      contentHash
+    expect(contentRegistered).to.not.equal(undefined);
+    expect(
+      contentRegistered?.data.creator.equals(provider.wallet.publicKey)
+    ).to.eq(true);
+    expect(
+      Buffer.from(contentRegistered?.data.salted_fingerprint ?? [])
+    ).to.deep.equal(
+      saltedFingerprint
     );
-    expect(capturedEvent?.timestamp.toNumber()).to.be.greaterThan(0);
+    expect(
+      Buffer.from(contentRegistered?.data.raw_phash ?? [])
+    ).to.deep.equal(
+      rawPhash
+    );
+    expect(contentRegistered?.data.timestamp.toNumber()).to.be.greaterThan(0);
     expect(afterSequence).to.eq(beforeSequence + 1);
   });
 });

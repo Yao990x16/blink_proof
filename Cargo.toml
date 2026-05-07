@@ -1,6 +1,8 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/*",
+    "services/blink_action",
+    "services/indexer",
 ]
 resolver = "2"
 

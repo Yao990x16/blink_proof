@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "pathPattern": "/verify",
+      "apiPath": "/api/actions/verify"
+    },
+    {
+      "pathPattern": "/api/actions/**",
+      "apiPath": "/api/actions/**"
+    }
+  ]
+}

@@ -7,3 +7,5 @@ test-ledger
 .yarn
 docs
 .surfpool
+services/blink_action/.env
+services/indexer/hashes.db

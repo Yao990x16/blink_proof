@@ -55,7 +55,8 @@ pub mod blink_proof {
 
     pub fn register_content(
         ctx: Context<RegisterContent>,
-        args: RegisterContentArgs,
+        salted_fingerprint: [u8; 32],
+        raw_phash: [u8; 8],
     ) -> Result<()> {
         let tree_key = ctx.accounts.merkle_tree.key();
         let signer_seeds: &[&[u8]] = &[
@@ -75,12 +76,13 @@ pub mod blink_proof {
         let signer = [signer_seeds];
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, &signer);
 
-        spl_account_compression::cpi::append(cpi_ctx, args.content_hash)?;
+        spl_account_compression::cpi::append(cpi_ctx, salted_fingerprint)?;
         let clock = Clock::get()?;
 
         emit!(ContentRegistered {
             creator: ctx.accounts.authority.key(),
-            content_hash: args.content_hash,
+            salted_fingerprint,
+            raw_phash,
             timestamp: clock.unix_timestamp,
         });
 
@@ -135,15 +137,11 @@ pub struct RegisterContent<'info> {
     pub log_wrapper: UncheckedAccount<'info>,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct RegisterContentArgs {
-    pub content_hash: [u8; 32],
-}
-
 #[event]
 pub struct ContentRegistered {
     pub creator: Pubkey,
-    pub content_hash: [u8; 32],
+    pub salted_fingerprint: [u8; 32],
+    pub raw_phash: [u8; 8],
     pub timestamp: i64,
 }
 
