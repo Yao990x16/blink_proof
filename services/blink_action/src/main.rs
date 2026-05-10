@@ -3,19 +3,22 @@ mod blinkproof;
 mod phash;
 
 use std::{
+    collections::HashMap,
     env,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use axum::{
     extract::rejection::JsonRejection,
+    extract::DefaultBodyLimit,
     extract::{Query, State},
     http::{
         header::{ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE},
-        HeaderName, Method, StatusCode,
+        HeaderMap, HeaderName, Method, StatusCode,
     },
     routing::get,
     Json, Router,
@@ -35,8 +38,8 @@ use tracing::{error, info, warn};
 
 use crate::{
     action_types::{
-        ActionGetResponse, ActionPostQuery, ActionPostRequest, ActionPostResponse,
-        ActionRule, ActionsJsonResponse, ApiError,
+        ActionGetResponse, ActionPostQuery, ActionPostRequest, ActionPostResponse, ActionRule,
+        ActionsJsonResponse, ApiError,
     },
     blinkproof::{build_register_content_transaction, BlinkProofConfig},
     phash::calculate_phash,
@@ -53,23 +56,59 @@ const DEFAULT_INDEXER_DB_PATH_FROM_WORKSPACE: &str = "services/indexer/hashes.db
 const DEFAULT_INDEXER_DB_PATH_FROM_SERVICE: &str = "../indexer/hashes.db";
 const PHASH_BIT_LENGTH: u32 = 64;
 const SIMILARITY_THRESHOLD: u32 = 5;
+const MAX_IMAGE_URL_LENGTH: usize = 10 * 1024 * 1024;
+const RATE_LIMIT_REQUESTS: u32 = 10;
+const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
 #[derive(Clone)]
 struct AppState {
     rpc_client: Arc<RpcClient>,
     blinkproof: BlinkProofConfig,
     index_pool: Option<SqlitePool>,
+    rate_limiter: Arc<RateLimiter>,
+}
+
+struct RateLimiter {
+    buckets: Mutex<HashMap<String, (Instant, u32)>>,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn check(&self, key: &str) -> bool {
+        let mut buckets = self.buckets.lock().unwrap();
+        let now = Instant::now();
+        let entry = buckets.entry(key.to_string()).or_insert((now, 0));
+
+        if now.duration_since(entry.0).as_secs() >= RATE_LIMIT_WINDOW_SECS {
+            *entry = (now, 1);
+            return true;
+        }
+
+        if entry.1 >= RATE_LIMIT_REQUESTS {
+            return false;
+        }
+
+        entry.1 += 1;
+        true
+    }
 }
 
 struct IndexedContent {
     creator: String,
     timestamp: String,
+    total_attestations: i64,
 }
 
 struct SimilarContent {
     creator: String,
     timestamp: String,
     distance: u32,
+    total_attestations: i64,
 }
 
 enum VerificationMatch {
@@ -105,6 +144,7 @@ async fn main() {
             get(get_actions_json).options(options_verify_action),
         )
         .with_state(state)
+        .layer(DefaultBodyLimit::max(MAX_IMAGE_URL_LENGTH + 1024))
         .layer(TraceLayer::new_for_http())
         .layer(build_cors_layer());
 
@@ -141,6 +181,7 @@ async fn build_state_from_env() -> Result<AppState, String> {
             merkle_tree: parse_pubkey("BLINK_MERKLE_TREE", &merkle_tree)?,
         },
         index_pool,
+        rate_limiter: Arc::new(RateLimiter::new()),
     })
 }
 
@@ -195,16 +236,33 @@ async fn get_actions_json() -> Json<ActionsJsonResponse> {
 
 async fn post_verify_action(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ActionPostQuery>,
     request: Result<Json<ActionPostRequest>, JsonRejection>,
 ) -> Result<Json<ActionPostResponse>, ApiError> {
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+
+    if !state.rate_limiter.check(client_ip) {
+        return Err(ApiError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "请求过于频繁，请稍后再试".to_string(),
+        });
+    }
+
     let request = match request {
         Ok(Json(request)) => request,
-        Err(JsonRejection::MissingJsonContentType(_))
-        | Err(JsonRejection::BytesRejection(_)) => ActionPostRequest {
-            account: None,
-            image_url: None,
-        },
+        Err(JsonRejection::MissingJsonContentType(_)) | Err(JsonRejection::BytesRejection(_)) => {
+            ActionPostRequest {
+                account: None,
+                image_url: None,
+            }
+        }
         Err(rejection) => return Err(ApiError::from_json_rejection(rejection)),
     };
 
@@ -223,11 +281,25 @@ async fn post_verify_action(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| PLACEHOLDER_ICON_URL.to_string());
 
+    if image_url.len() > MAX_IMAGE_URL_LENGTH {
+        return Err(ApiError::bad_request(
+            "image data exceeds maximum allowed size (10 MB)",
+        ));
+    }
+
+    if !image_url.starts_with("https://")
+        && !image_url.starts_with("http://")
+        && !image_url.starts_with("data:")
+    {
+        return Err(ApiError::bad_request(
+            "image_url must use http://, https://, or data: protocol",
+        ));
+    }
+
     info!("正在为图片 {image_url} 构造双重索引交易");
 
-    let (salted_fingerprint, raw_phash) = calculate_phash(image_url.clone())
-        .await
-        .map_err(|error| {
+    let (salted_fingerprint, raw_phash) =
+        calculate_phash(image_url.clone()).await.map_err(|error| {
             error!("failed to calculate perceptual hash for {image_url}: {error:#}");
             ApiError::bad_request("failed to download or decode the image for pHash generation")
         })?;
@@ -237,17 +309,18 @@ async fn post_verify_action(
     {
         let message = match indexed {
             VerificationMatch::Exact(content) => format!(
-                "✅ 官方原图存证。该内容已由 {} 于 {} 存证，无需重复操作。",
-                content.creator, content.timestamp
+                "✅ 官方原图存证。该内容已由 {} 于 {} 存证（累计 {} 次存证记录）。",
+                content.creator, content.timestamp, content.total_attestations
             ),
             VerificationMatch::Similar(content) if content.distance == 0 => format!(
-                "✅ 官方原图存证。该内容已由 {} 于 {} 存证，无需重复操作。",
-                content.creator, content.timestamp
+                "✅ 官方原图存证。该内容已由 {} 于 {} 存证（累计 {} 次存证记录）。",
+                content.creator, content.timestamp, content.total_attestations
             ),
             VerificationMatch::Similar(content) => format!(
-                "⚠️ 发现高度相似内容（相似度 {}%），疑似二次创作或搬运。原作者：{}",
+                "⚠️ 发现高度相似内容（相似度 {}%），疑似二次创作或搬运。原作者：{}（累计 {} 次存证记录）。",
                 similarity_percent(content.distance),
-                content.creator
+                content.creator,
+                content.total_attestations
             ),
         };
 
@@ -300,7 +373,10 @@ async fn init_index_pool() -> Option<SqlitePool> {
     let options = match SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display())) {
         Ok(options) => options.read_only(true),
         Err(error) => {
-            warn!("failed to build SQLite options for {}: {error}", path.display());
+            warn!(
+                "failed to build SQLite options for {}: {error}",
+                path.display()
+            );
             return None;
         }
     };
@@ -346,9 +422,13 @@ async fn find_registered_content(
 
     match sqlx::query(
         r#"
-        SELECT creator, timestamp
-        FROM registered_content
-        WHERE salted_fingerprint = ?1
+        SELECT
+            rc.creator,
+            rc.timestamp,
+            COALESCE(ir.total_attestations, 0) AS total_attestations
+        FROM registered_content rc
+        LEFT JOIN issuer_reputation ir ON rc.creator = ir.issuer
+        WHERE rc.salted_fingerprint = ?1
         LIMIT 1
         "#,
     )
@@ -360,6 +440,7 @@ async fn find_registered_content(
             return Some(VerificationMatch::Exact(IndexedContent {
                 creator: row.get("creator"),
                 timestamp: row.get("timestamp"),
+                total_attestations: row.get("total_attestations"),
             }));
         }
         Ok(None) => {}
@@ -378,12 +459,22 @@ async fn find_similar_registered_content(
     pool: &SqlitePool,
     target_raw_phash: &[u8; 8],
 ) -> Option<SimilarContent> {
+    let target_int = phash_bytes_to_i64(target_raw_phash);
+
     let rows = sqlx::query(
         r#"
-        SELECT raw_phash, creator, timestamp
-        FROM registered_content
+        SELECT
+            rc.raw_phash,
+            rc.creator,
+            rc.timestamp,
+            COALESCE(ir.total_attestations, 0) AS total_attestations
+        FROM registered_content rc
+        LEFT JOIN issuer_reputation ir ON rc.creator = ir.issuer
+        ORDER BY ABS(rc.raw_phash_int - ?1)
+        LIMIT 500
         "#,
     )
+    .bind(target_int)
     .fetch_all(pool)
     .await;
 
@@ -405,6 +496,7 @@ async fn find_similar_registered_content(
                 creator: row.get("creator"),
                 timestamp: row.get("timestamp"),
                 distance,
+                total_attestations: row.get("total_attestations"),
             })
         })
         .min_by_key(|content| content.distance)
@@ -415,6 +507,10 @@ fn phash_hamming_distance(left: &[u8; 8], right: &[u8; 8]) -> u32 {
         .zip(right.iter())
         .map(|(left, right)| (left ^ right).count_ones())
         .sum()
+}
+
+fn phash_bytes_to_i64(bytes: &[u8; 8]) -> i64 {
+    i64::from_be_bytes(*bytes)
 }
 
 fn similarity_percent(distance: u32) -> u32 {

@@ -5,6 +5,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     transaction::Transaction,
 };
+use solana_system_interface::program as system_program;
 
 const TREE_AUTHORITY_SEED: &[u8] = b"tree_authority";
 const REGISTER_CONTENT_DATA_LEN: usize = 48;
@@ -24,12 +25,8 @@ pub fn build_register_content_transaction(
     raw_phash: [u8; 8],
     recent_blockhash: Hash,
 ) -> Transaction {
-    let instruction = build_register_content_instruction(
-        config,
-        account,
-        salted_fingerprint,
-        raw_phash,
-    );
+    let instruction =
+        build_register_content_instruction(config, account, salted_fingerprint, raw_phash);
     let message = Message::new_with_blockhash(&[instruction], Some(&account), &recent_blockhash);
 
     Transaction::new_unsigned(message)
@@ -45,13 +42,19 @@ pub fn build_register_content_instruction(
         &[TREE_AUTHORITY_SEED, config.merkle_tree.as_ref()],
         &config.program_id,
     );
+    let (registration_receipt, _) = Pubkey::find_program_address(
+        &[b"receipt", salted_fingerprint.as_ref()],
+        &config.program_id,
+    );
 
     Instruction {
         program_id: config.program_id,
         accounts: vec![
             AccountMeta::new(config.merkle_tree, false),
             AccountMeta::new_readonly(tree_authority, false),
-            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(authority, true),
+            AccountMeta::new(registration_receipt, false),
+            AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(config.compression_program_id, false),
             AccountMeta::new_readonly(config.noop_program_id, false),
         ],

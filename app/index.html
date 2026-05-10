@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="BlinkProof 内容指纹核验应用，一键检查媒体是否已在 Solana 链上存证。"
+    />
+    <title>BlinkProof | 内容指纹核验</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/@solana/web3.js@1/lib/index.iife.min.js"></script>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="BlinkProof 首页">
+        <span class="brand-mark">B</span>
+        <span>
+          <strong>BlinkProof</strong>
+          <small>Don't trust — Blink.</small>
+        </span>
+      </a>
+      <nav class="header-actions" aria-label="页面操作">
+        <a class="ghost-link" href="http://localhost:3001/" target="_blank" rel="noreferrer">
+          Indexer 看板
+        </a>
+        <button id="wallet-button" class="button button-dark" type="button">
+          连接钱包
+        </button>
+      </nav>
+    </header>
+
+    <main id="top" class="page-shell">
+      <section class="hero-section" aria-labelledby="hero-title">
+        <div class="eyebrow">Solana State Compression · Blink Action</div>
+        <div class="hero-grid">
+          <div>
+            <h1 id="hero-title">别猜真假，用指纹核验。</h1>
+            <p class="hero-copy">
+              上传图片，BlinkProof 会通过后端 Action 计算权威 pHash，与本地索引库和链上压缩树协同判断：原图已存证、疑似相似搬运，或生成一笔待签名的存证交易。
+            </p>
+          </div>
+          <aside class="hero-panel" aria-label="系统状态">
+            <span class="panel-kicker">Live protocol</span>
+            <strong id="hero-stat-total">--</strong>
+            <span>已索引内容指纹</span>
+          </aside>
+        </div>
+      </section>
+
+      <section id="upload-section" class="workspace-card" aria-labelledby="upload-title">
+        <div class="section-heading">
+          <span class="step-pill">01</span>
+          <div>
+            <h2 id="upload-title">上传媒体样本</h2>
+            <p>支持拖拽、粘贴或点击选择图片。浏览器端 hash 仅用于展示，最终结果以后端计算为准。</p>
+          </div>
+        </div>
+
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="选择或拖拽图片">
+          <div class="upload-orb" aria-hidden="true"></div>
+          <div>
+            <h3>拖入图片，或点击选择文件</h3>
+            <p>也可以直接复制图片后在页面内粘贴。最大请求体限制为 10 MB。</p>
+          </div>
+          <button id="choose-file-button" class="button button-accent" type="button">
+            选择图片
+          </button>
+          <input type="file" id="file-input" accept="image/*" hidden />
+        </div>
+
+        <div id="preview-container" class="preview-grid" hidden>
+          <figure class="preview-frame">
+            <img id="preview-image" alt="待核验图片预览" />
+          </figure>
+          <div id="phash-info" class="hash-card">
+            <span class="panel-kicker">Local preview hash</span>
+            <code id="display-hash">计算中...</code>
+            <p id="file-meta">等待图片信息</p>
+            <button id="verify-button" class="button button-dark" type="button">
+              开始验证
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="result-section" class="result-section" hidden aria-live="polite">
+        <article id="result-card" class="result-card">
+          <div id="result-icon" class="result-icon">🔗</div>
+          <div class="result-body">
+            <span id="result-label" class="panel-kicker">等待结果</span>
+            <h2 id="result-title">尚未验证</h2>
+            <p id="result-message">上传图片并连接钱包后开始验证。</p>
+            <div id="result-actions" class="result-actions"></div>
+          </div>
+        </article>
+      </section>
+
+      <section id="stats-section" class="stats-section" aria-labelledby="stats-title">
+        <div class="section-heading compact">
+          <span class="step-pill">02</span>
+          <div>
+            <h2 id="stats-title">实时索引统计</h2>
+            <p>数据来自本地 Indexer `/stats`，每 30 秒自动刷新。</p>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span class="panel-kicker">Total fingerprints</span>
+            <strong id="stat-total">--</strong>
+            <p>已索引加盐指纹总量</p>
+          </article>
+          <article class="stat-card">
+            <span class="panel-kicker">Unique creators</span>
+            <strong id="stat-creators">--</strong>
+            <p>独立创作者地址数量</p>
+          </article>
+          <article class="stat-card wide-stat">
+            <span class="panel-kicker">Latest registration</span>
+            <strong id="stat-latest-hash">--</strong>
+            <p id="stat-latest-time">暂无最近存证</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Powered by Solana</span>
+      <a href="https://github.com/Yao990x16/blink_proof" target="_blank" rel="noreferrer">
+        GitHub 项目
+      </a>
+    </footer>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
