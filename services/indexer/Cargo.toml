@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anchor-lang = "0.32.1"
 anyhow = "1.0"
+dotenv = "0.15"
 axum = "0.7"
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }

@@ -50,27 +50,23 @@ fn decode_and_hash_image(image_bytes: Vec<u8>) -> Result<([u8; 32], [u8; 8])> {
     let hash_image = img_hash::image::load_from_memory(&image_bytes)
         .context("failed to decode image bytes into img_hash compatible image data")?;
 
-    // img_hash 3.2 does not expose a DCT-specific enum variant, so we use its
-    // strongest built-in perceptual mode to keep the hashing pipeline stable here.
+    // Use standard Gradient hash to ensure exactly 64 bits (8 bytes) for an 8x8 size.
     let hasher = HasherConfig::new()
-        .hash_alg(HashAlg::DoubleGradient)
+        .hash_alg(HashAlg::Gradient)
         .hash_size(PHASH_HASH_SIZE, PHASH_HASH_SIZE)
         .to_hasher();
     let image_hash = hasher.hash_image(&hash_image);
     let hash_bytes = image_hash.as_bytes();
-    let raw_phash = extract_raw_phash_bytes(hash_bytes)?;
+
+    let mut raw_phash = [0u8; 8];
+    if hash_bytes.len() >= 8 {
+        raw_phash.copy_from_slice(&hash_bytes[..8]);
+    } else {
+        // Pad with zeros if for some reason it's smaller
+        raw_phash[..hash_bytes.len()].copy_from_slice(hash_bytes);
+    }
 
     Ok((salted_sha256_fingerprint(&raw_phash), raw_phash))
-}
-
-fn extract_raw_phash_bytes(hash_bytes: &[u8]) -> Result<[u8; 8]> {
-    let raw_phash: [u8; 8] = hash_bytes
-        .get(..8)
-        .context("img_hash returned fewer than 8 bytes for the perceptual hash")?
-        .try_into()
-        .context("failed to convert perceptual hash bytes into a fixed 8-byte array")?;
-
-    Ok(raw_phash)
 }
 
 /// Maps the compact 64-bit perceptual hash into a stable 32-byte fingerprint.

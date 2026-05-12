@@ -14,6 +14,7 @@ const state = {
   previewUrl: null,
   wallet: null,
   pendingTransaction: null,
+  i18n: window.__i18n || {},
 };
 
 const elements = {};
@@ -27,6 +28,17 @@ document.addEventListener("DOMContentLoaded", () => {
   window.setInterval(loadStats, STATS_REFRESH_MS);
 });
 
+// Listen for language changes from index.html
+window.addEventListener("langChanged", (e) => {
+  state.i18n = e.detail.i18n;
+  if (state.wallet) updateWalletButton();
+  if (elements.verifyButton && !elements.verifyButton.disabled) {
+    elements.verifyButton.textContent = state.i18n['btn-verify'] || "Verify Provenance";
+  }
+  // Refresh stats to update time strings
+  loadStats();
+});
+
 function bindElements() {
   Object.assign(elements, {
     walletButton: document.querySelector("#wallet-button"),
@@ -35,6 +47,7 @@ function bindElements() {
     chooseFileButton: document.querySelector("#choose-file-button"),
     previewContainer: document.querySelector("#preview-container"),
     previewImage: document.querySelector("#preview-image"),
+    phashInfo: document.querySelector("#phash-info"),
     displayHash: document.querySelector("#display-hash"),
     fileMeta: document.querySelector("#file-meta"),
     verifyButton: document.querySelector("#verify-button"),
@@ -42,6 +55,7 @@ function bindElements() {
     resultCard: document.querySelector("#result-card"),
     resultIcon: document.querySelector("#result-icon"),
     resultLabel: document.querySelector("#result-label"),
+    phashLabel: document.querySelector("#phash-label"),
     resultTitle: document.querySelector("#result-title"),
     resultMessage: document.querySelector("#result-message"),
     resultActions: document.querySelector("#result-actions"),
@@ -109,7 +123,7 @@ function setupWalletButton() {
       state.wallet = await connectWallet();
       updateWalletButton();
     } catch (error) {
-      showResult("warning", "⚠️", "钱包未连接", error.message);
+      showResult("warning", "⚠️", state.i18n['wallet-error-title'] || "Wallet Error", error.message);
     }
   });
 }
@@ -120,7 +134,7 @@ function setupVerifyButton() {
 
 async function handleImageFile(file) {
   if (!file.type.startsWith("image/")) {
-    showResult("warning", "⚠️", "文件类型不支持", "请选择 PNG、JPEG、WebP 等图片文件。");
+    showResult("warning", "⚠️", state.i18n['file-error-title'] || "Unsupported File", state.i18n['file-error-msg'] || "Please select an image file.");
     return;
   }
 
@@ -131,21 +145,22 @@ async function handleImageFile(file) {
   state.previewUrl = URL.createObjectURL(file);
   elements.previewImage.src = state.previewUrl;
   elements.previewContainer.hidden = false;
-  elements.displayHash.textContent = "计算中...";
+  elements.phashInfo.hidden = false;
+  elements.displayHash.textContent = state.i18n['calculating'] || "Calculating...";
   elements.fileMeta.textContent = `${file.name} · ${formatBytes(file.size)}`;
 
   try {
     const { displayHash } = await computeDisplayHash(file);
     elements.displayHash.textContent = displayHash;
   } catch (error) {
-    elements.displayHash.textContent = "前端近似 hash 计算失败";
+    elements.displayHash.textContent = "Hash failed";
     elements.fileMeta.textContent = error.message;
   }
 }
 
 async function verifyCurrentImage() {
   if (!state.file) {
-    showResult("warning", "⚠️", "还没有图片", "请先上传或粘贴一张图片。");
+    showResult("warning", "⚠️", state.i18n['no-image-title'] || "No Image", state.i18n['no-image-msg'] || "Please upload an image first.");
     return;
   }
 
@@ -155,12 +170,12 @@ async function verifyCurrentImage() {
       state.wallet = await connectWallet();
       updateWalletButton();
     } catch (error) {
-      showResult("warning", "⚠️", "需要连接钱包", error.message);
+      showResult("warning", "⚠️", "钱包错误", "请先连接钱包后再进行存证验证！");
       return;
     }
   }
 
-  setBusy(true, "正在请求 Blink Action...");
+  setBusy(true, state.i18n['msg-request-action'] || "Requesting Action...");
 
   try {
     const imageUrl = await prepareImageForBackend(state.file);
@@ -172,21 +187,21 @@ async function verifyCurrentImage() {
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new Error(payload.message ?? "Blink Action 请求失败");
+      throw new Error(payload.message ?? "Blink Action failed");
     }
 
     if (!payload.transaction) {
-      renderVerificationMessage(payload.message ?? "该内容已完成核验。 ");
+      renderVerificationMessage(payload.message ?? "Verification complete.");
       loadStats();
       return;
     }
 
     state.pendingTransaction = payload.transaction;
-    showResult("action", "🔗", "未发现链上存证", payload.message, [
-      actionButton("签名存证", signPendingTransaction),
+    showResult("action", "🔗", state.i18n['not-found-title'] || "Not Found", payload.message, [
+      actionButton(state.i18n['btn-sign'] || "Sign Attestation", signPendingTransaction),
     ]);
   } catch (error) {
-    showResult("error", "⛔", "验证失败", error.message);
+    showResult("error", "⛔", state.i18n['verify-failed-title'] || "Verify Failed", error.message);
   } finally {
     setBusy(false);
   }
@@ -195,18 +210,18 @@ async function verifyCurrentImage() {
 async function signPendingTransaction() {
   if (!state.pendingTransaction) return;
 
-  setBusy(true, "等待钱包签名...");
+  setBusy(true, state.i18n['msg-waiting-sign'] || "Waiting for signature...");
 
   try {
     const signature = await signAndSendTransaction(state.pendingTransaction);
     const link = `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http%3A%2F%2F127.0.0.1%3A8899`;
-    showResult("success", "✅", "交易已提交", `签名：${signature}`, [
-      evidenceLink("查看链上证据", link),
+    showResult("success", "✅", state.i18n['tx-submitted-title'] || "Transaction Submitted", `Signature: ${signature}`, [
+      evidenceLink(state.i18n['btn-view-evidence'] || "View Evidence", link),
     ]);
     state.pendingTransaction = null;
     setTimeout(loadStats, 1500);
   } catch (error) {
-    showResult("error", "⛔", "签名或发送失败", error.message);
+    showResult("error", "⛔", state.i18n['sign-failed-title'] || "Sign Failed", error.message);
   } finally {
     setBusy(false);
   }
@@ -219,15 +234,15 @@ async function loadStats() {
     const stats = await response.json();
     const latest = stats.latest_registration;
 
-    elements.heroStatTotal.textContent = formatNumber(stats.total_fingerprints);
+    if (elements.heroStatTotal) elements.heroStatTotal.textContent = formatNumber(stats.total_fingerprints);
     elements.statTotal.textContent = formatNumber(stats.total_fingerprints);
     elements.statCreators.textContent = formatNumber(stats.unique_creators_count);
     elements.statLatestHash.textContent = latest?.hash_prefix ?? "--";
     elements.statLatestTime.textContent = latest?.timestamp
-      ? `最近存证时间：${latest.timestamp}`
-      : "暂无最近存证";
+      ? `${state.i18n['stat-recently'] || "Recently Anchored"}: ${latest.timestamp}`
+      : (state.i18n['stat-no-recent'] || "No recent attestations");
   } catch (error) {
-    elements.heroStatTotal.textContent = "离线";
+    if (elements.heroStatTotal) elements.heroStatTotal.textContent = "OFFLINE";
     elements.statTotal.textContent = "--";
     elements.statCreators.textContent = "--";
     elements.statLatestHash.textContent = "--";
@@ -237,17 +252,18 @@ async function loadStats() {
 
 function renderVerificationMessage(message) {
   if (message.includes("⚠️")) {
-    showResult("warning", "⚠️", "发现高度相似内容", message);
+    showResult("warning", "⚠️", state.i18n['similarity-alert-title'] || "SIMILARITY ALERT", message);
     return;
   }
 
-  showResult("success", "✅", "官方原图存证", message);
+  showResult("success", "✅", state.i18n['verified-original-title'] || "VERIFIED ORIGINAL", message);
 }
 
 function showResult(type, icon, title, message, actions = []) {
   elements.resultSection.hidden = false;
   elements.resultCard.className = `result-card is-${type}`;
   elements.resultIcon.textContent = icon;
+  elements.resultLabel.className = `status-pill status-${type}`;
   elements.resultLabel.textContent = typeLabel(type);
   elements.resultTitle.textContent = title;
   elements.resultMessage.textContent = message;
@@ -273,23 +289,24 @@ function evidenceLink(label, href) {
   return link;
 }
 
-function setBusy(isBusy, label = "开始验证") {
+function setBusy(isBusy, label = (state.i18n['btn-verify'] || "Verify Provenance")) {
   elements.verifyButton.disabled = isBusy;
-  elements.verifyButton.textContent = isBusy ? label : "开始验证";
+  elements.verifyButton.textContent = isBusy ? label : (state.i18n['btn-verify'] || "Verify Provenance");
 }
 
 function updateWalletButton() {
   const wallet = state.wallet ?? getConnectedWallet();
-  elements.walletButton.textContent = wallet ? shortAddress(wallet) : "连接钱包";
+  elements.walletButton.textContent = wallet ? shortAddress(wallet) : (state.i18n['wallet-connect'] || "Connect Wallet");
 }
 
 function typeLabel(type) {
-  return {
-    success: "Verified",
-    warning: "Similarity alert",
-    action: "Action required",
-    error: "Error",
-  }[type] ?? "Status";
+  const labels = {
+    success: state.i18n['label-verified'] || "Verified",
+    warning: state.i18n['label-similarity'] || "Similarity alert",
+    action: state.i18n['label-action'] || "Action required",
+    error: state.i18n['label-error'] || "Error",
+  };
+  return labels[type] ?? "Status";
 }
 
 function shortAddress(address) {
@@ -303,5 +320,6 @@ function formatBytes(bytes) {
 }
 
 function formatNumber(value) {
-  return new Intl.NumberFormat("zh-CN").format(Number(value ?? 0));
+  const locale = document.documentElement.lang === 'zh' ? 'zh-CN' : 'en-US';
+  return new Intl.NumberFormat(locale).format(Number(value ?? 0));
 }

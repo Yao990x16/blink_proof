@@ -57,6 +57,10 @@ pub fn build_register_content_instruction(
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(config.compression_program_id, false),
             AccountMeta::new_readonly(config.noop_program_id, false),
+            // Optional tree_config account (pass program_id if None)
+            AccountMeta::new_readonly(config.program_id, false),
+            // Optional issuer_credential account (pass program_id if None)
+            AccountMeta::new_readonly(config.program_id, false),
         ],
         data: build_register_content_data(salted_fingerprint, raw_phash),
     }

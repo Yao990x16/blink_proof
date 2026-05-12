@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,137 +7,242 @@
       name="description"
       content="BlinkProof 内容指纹核验应用，一键检查媒体是否已在 Solana 链上存证。"
     />
-    <title>BlinkProof | 内容指纹核验</title>
+    <title>BlinkProof Terminal | Content Provenance</title>
+    <!-- BlinkProof v2.1 - i18n Support & Tech/Utility Design -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@700;800;900&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
     <script src="https://unpkg.com/@solana/web3.js@1/lib/index.iife.min.js"></script>
     <link rel="stylesheet" href="css/style.css" />
   </head>
   <body>
-    <div class="grain" aria-hidden="true"></div>
-    <header class="site-header">
-      <a class="brand" href="#top" aria-label="BlinkProof 首页">
-        <span class="brand-mark">B</span>
-        <span>
-          <strong>BlinkProof</strong>
-          <small>Don't trust — Blink.</small>
-        </span>
-      </a>
-      <nav class="header-actions" aria-label="页面操作">
-        <a class="ghost-link" href="http://localhost:3001/" target="_blank" rel="noreferrer">
-          Indexer 看板
+    <div class="dashboard">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="BlinkProof">
+          <span class="brand-mark">B</span>
+          <span>BlinkProof</span>
         </a>
-        <button id="wallet-button" class="button button-dark" type="button">
-          连接钱包
-        </button>
-      </nav>
-    </header>
-
-    <main id="top" class="page-shell">
-      <section class="hero-section" aria-labelledby="hero-title">
-        <div class="eyebrow">Solana State Compression · Blink Action</div>
-        <div class="hero-grid">
-          <div>
-            <h1 id="hero-title">别猜真假，用指纹核验。</h1>
-            <p class="hero-copy">
-              上传图片，BlinkProof 会通过后端 Action 计算权威 pHash，与本地索引库和链上压缩树协同判断：原图已存证、疑似相似搬运，或生成一笔待签名的存证交易。
-            </p>
+        <div class="header-actions">
+          <a class="ghost-link" href="http://localhost:3001/" target="_blank" rel="noreferrer" data-t="nav-indexer">
+            Indexer Board
+          </a>
+          <div class="lang-toggle">
+            <button class="lang-btn" data-lang="en">EN</button>
+            <span class="lang-sep">/</span>
+            <button class="lang-btn" data-lang="zh">中文</button>
           </div>
-          <aside class="hero-panel" aria-label="系统状态">
-            <span class="panel-kicker">Live protocol</span>
-            <strong id="hero-stat-total">--</strong>
-            <span>已索引内容指纹</span>
-          </aside>
+          <button id="wallet-button" class="button button-dark" type="button" data-t="wallet-connect">
+            Connect Wallet
+          </button>
         </div>
-      </section>
+      </header>
 
-      <section id="upload-section" class="workspace-card" aria-labelledby="upload-title">
-        <div class="section-heading">
-          <span class="step-pill">01</span>
-          <div>
-            <h2 id="upload-title">上传媒体样本</h2>
-            <p>支持拖拽、粘贴或点击选择图片。浏览器端 hash 仅用于展示，最终结果以后端计算为准。</p>
-          </div>
-        </div>
+      <main class="main-content">
+        <section class="section-header">
+          <h2 data-t="title-verify">Verify Authenticity</h2>
+          <p data-t="subtitle-verify">Drop a media sample to verify its provenance on Solana.</p>
+        </section>
 
-        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="选择或拖拽图片">
-          <div class="upload-orb" aria-hidden="true"></div>
-          <div>
-            <h3>拖入图片，或点击选择文件</h3>
-            <p>也可以直接复制图片后在页面内粘贴。最大请求体限制为 10 MB。</p>
-          </div>
-          <button id="choose-file-button" class="button button-accent" type="button">
-            选择图片
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button">
+          <h3 data-t="drop-title">Drag & drop image, or click to browse</h3>
+          <p data-t="drop-subtitle">Maximum payload limit: 10 MB. Supported: JPG, PNG, WEBP.</p>
+          <button id="choose-file-button" class="button button-accent" type="button" style="margin-top: 12px;" data-t="btn-select">
+            Select Media
           </button>
           <input type="file" id="file-input" accept="image/*" hidden />
         </div>
 
-        <div id="preview-container" class="preview-grid" hidden>
+        <div id="preview-container" class="preview-container" hidden>
           <figure class="preview-frame">
-            <img id="preview-image" alt="待核验图片预览" />
+            <img id="preview-image" alt="Preview" />
           </figure>
-          <div id="phash-info" class="hash-card">
-            <span class="panel-kicker">Local preview hash</span>
-            <code id="display-hash">计算中...</code>
-            <p id="file-meta">等待图片信息</p>
-            <button id="verify-button" class="button button-dark" type="button">
-              开始验证
+        </div>
+      </main>
+
+      <aside class="side-panel">
+        <article class="panel-block" id="phash-info" hidden>
+          <div class="panel-header">
+            <span data-t="panel-fingerprint">Media Fingerprint</span>
+            <span id="phash-label" class="status-pill status-neutral" data-t="label-phash">Local pHash</span>
+          </div>
+          <div class="panel-content">
+            <code id="display-hash" class="mono-text" data-t="calculating">Calculating...</code>
+            <p id="file-meta" style="font-size: 11px; margin: 12px 0 0; color: var(--muted);"></p>
+            <button id="verify-button" class="button button-dark" type="button" style="width: 100%; margin-top: 16px;" data-t="btn-verify">
+              Verify Provenance
             </button>
           </div>
-        </div>
-      </section>
+        </article>
 
-      <section id="result-section" class="result-section" hidden aria-live="polite">
-        <article id="result-card" class="result-card">
-          <div id="result-icon" class="result-icon">🔗</div>
-          <div class="result-body">
-            <span id="result-label" class="panel-kicker">等待结果</span>
-            <h2 id="result-title">尚未验证</h2>
-            <p id="result-message">上传图片并连接钱包后开始验证。</p>
-            <div id="result-actions" class="result-actions"></div>
+        <article id="result-section" class="panel-block" hidden>
+          <div class="panel-header">
+            <span data-t="panel-status">Verification Status</span>
+          </div>
+          <div id="result-card" class="result-card">
+            <div id="result-icon" class="result-icon">🔗</div>
+            <div>
+              <div id="result-label" class="status-pill status-neutral" style="margin-bottom: 8px;">Waiting</div>
+              <h3 id="result-title" class="result-title" data-t="result-ready-title">System Ready</h3>
+              <p id="result-message" class="result-msg" data-t="result-ready-msg">Upload an image to begin.</p>
+              <div id="result-actions" class="result-actions"></div>
+            </div>
           </div>
         </article>
-      </section>
 
-      <section id="stats-section" class="stats-section" aria-labelledby="stats-title">
-        <div class="section-heading compact">
-          <span class="step-pill">02</span>
-          <div>
-            <h2 id="stats-title">实时索引统计</h2>
-            <p>数据来自本地 Indexer `/stats`，每 30 秒自动刷新。</p>
+        <article class="panel-block">
+          <div class="panel-header">
+            <span data-t="panel-network">Protocol Network</span>
           </div>
-        </div>
-        <div class="stats-grid">
-          <article class="stat-card">
-            <span class="panel-kicker">Total fingerprints</span>
-            <strong id="stat-total">--</strong>
-            <p>已索引加盐指纹总量</p>
-          </article>
-          <article class="stat-card">
-            <span class="panel-kicker">Unique creators</span>
-            <strong id="stat-creators">--</strong>
-            <p>独立创作者地址数量</p>
-          </article>
-          <article class="stat-card wide-stat">
-            <span class="panel-kicker">Latest registration</span>
-            <strong id="stat-latest-hash">--</strong>
-            <p id="stat-latest-time">暂无最近存证</p>
-          </article>
-        </div>
-      </section>
-    </main>
+          <div class="panel-content stats-list">
+            <div class="stat-item">
+              <span class="stat-label" data-t="stat-total">Total Attestations</span>
+              <span id="stat-total" class="stat-value tabular">--</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label" data-t="stat-issuers">Unique Issuers</span>
+              <span id="stat-creators" class="stat-value tabular">--</span>
+            </div>
+            <div style="margin-top: 8px; border-top: 1px solid var(--border); padding-top: 12px;">
+              <span class="stat-label" data-t="stat-anchor">Latest Hash Anchor</span>
+              <div id="stat-latest-hash" class="mono-text" style="margin-top: 4px; color: var(--accent);">--</div>
+              <div id="stat-latest-time" style="font-size: 10px; margin-top: 4px; color: var(--muted);">--</div>
+            </div>
+          </div>
+        </article>
+      </aside>
 
-    <footer class="site-footer">
-      <span>Powered by Solana</span>
-      <a href="https://github.com/Yao990x16/blink_proof" target="_blank" rel="noreferrer">
-        GitHub 项目
-      </a>
-    </footer>
+      <footer class="site-footer">
+        <span data-t="footer-text">Powered by Solana State Compression & Blinks</span>
+      </footer>
+    </div>
 
+    <script type="module">
+      const i18n = {
+        en: {
+          'nav-indexer': 'Indexer Board',
+          'wallet-connect': 'Connect Wallet',
+          'wallet-connected': 'Connected',
+          'wallet-error-title': 'Wallet Error',
+          'title-verify': 'Verify Authenticity',
+          'subtitle-verify': 'Drop a media sample to verify its provenance on Solana.',
+          'drop-title': 'Drag & drop image, or click to browse',
+          'drop-subtitle': 'Maximum payload limit: 10 MB. Supported: JPG, PNG, WEBP.',
+          'btn-select': 'Select Media',
+          'file-error-title': 'Unsupported File',
+          'file-error-msg': 'Please select an image file (JPG, PNG, WEBP).',
+          'no-image-title': 'No Image',
+          'no-image-msg': 'Please upload or paste an image first.',
+          'panel-fingerprint': 'Media Fingerprint',
+          'label-phash': 'Local pHash',
+          'calculating': 'Calculating...',
+          'btn-verify': 'Verify Provenance',
+          'msg-request-action': 'Requesting Action...',
+          'panel-status': 'Verification Status',
+          'result-ready-title': 'System Ready',
+          'result-ready-msg': 'Upload an image to begin.',
+          'not-found-title': 'Not Found',
+          'btn-sign': 'Sign Attestation',
+          'verify-failed-title': 'Verification Failed',
+          'msg-waiting-sign': 'Waiting for signature...',
+          'tx-submitted-title': 'Transaction Submitted',
+          'btn-view-evidence': 'View Evidence',
+          'sign-failed-title': 'Signature Failed',
+          'panel-network': 'Protocol Network',
+          'stat-total': 'Total Attestations',
+          'stat-issuers': 'Unique Issuers',
+          'stat-anchor': 'Latest Hash Anchor',
+          'stat-recently': 'Recently Anchored',
+          'stat-no-recent': 'No recent attestations',
+          'similarity-alert-title': 'SIMILARITY ALERT',
+          'verified-original-title': 'VERIFIED ORIGINAL',
+          'label-verified': 'Verified',
+          'label-similarity': 'Similarity Alert',
+          'label-action': 'Action Required',
+          'label-error': 'Error',
+          'footer-text': 'Powered by Solana State Compression & Blinks'
+        },
+        zh: {
+          'nav-indexer': '索引面板',
+          'wallet-connect': '连接钱包',
+          'wallet-connected': '已连接',
+          'wallet-error-title': '钱包错误',
+          'title-verify': '验证真实性',
+          'subtitle-verify': '拖入媒体文件以在 Solana 上验证其来源。',
+          'drop-title': '拖拽图片至此，或点击上传',
+          'drop-subtitle': '最大支持 10 MB。支持格式：JPG, PNG, WEBP。',
+          'btn-select': '选择媒体',
+          'file-error-title': '文件不支持',
+          'file-error-msg': '请选择图片文件（JPG, PNG, WEBP）。',
+          'no-image-title': '未选择图片',
+          'no-image-msg': '请先上传或粘贴一张图片。',
+          'panel-fingerprint': '媒体指纹',
+          'label-phash': '本地 pHash',
+          'calculating': '计算中...',
+          'btn-verify': '验证存证',
+          'msg-request-action': '正在请求 Action...',
+          'panel-status': '核验状态',
+          'result-ready-title': '系统就绪',
+          'result-ready-msg': '上传图片以开始。',
+          'not-found-title': '未发现存证',
+          'btn-sign': '签名存证',
+          'verify-failed-title': '验证失败',
+          'msg-waiting-sign': '等待钱包签名...',
+          'tx-submitted-title': '交易已提交',
+          'btn-view-evidence': '查看链上证据',
+          'sign-failed-title': '签名失败',
+          'panel-network': '协议网络',
+          'stat-total': '总存证量',
+          'stat-issuers': '独立发行者',
+          'stat-anchor': '最新哈希锚点',
+          'stat-recently': '最新锚定时间',
+          'stat-no-recent': '暂无存证记录',
+          'similarity-alert-title': '相似度警报',
+          'verified-original-title': '验证为原创',
+          'label-verified': '已验证',
+          'label-similarity': '相似警报',
+          'label-action': '需要操作',
+          'label-error': '错误',
+          'footer-text': '由 Solana State Compression 与 Blinks 提供技术支持'
+        }
+      };
+
+      let currentLang = localStorage.getItem('blinkproof-lang') || 'en';
+
+      function updateUI() {
+        document.querySelectorAll('[data-t]').forEach(el => {
+          const key = el.getAttribute('data-t');
+          if (i18n[currentLang][key]) {
+            el.textContent = i18n[currentLang][key];
+          }
+        });
+        
+        document.querySelectorAll('.lang-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('data-lang') === currentLang);
+        });
+        
+        document.documentElement.lang = currentLang;
+
+        // Expose globally for app.js
+        window.__i18n = i18n[currentLang];
+
+        // Custom event for app.js to handle translations if needed
+        window.dispatchEvent(new CustomEvent('langChanged', { detail: { lang: currentLang, i18n: i18n[currentLang] } }));
+      }
+
+      document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentLang = btn.getAttribute('data-lang');
+          localStorage.setItem('blinkproof-lang', currentLang);
+          updateUI();
+        });
+      });
+
+      // Initial Call
+      updateUI();
+    </script>
     <script type="module" src="js/app.js"></script>
   </body>
 </html>

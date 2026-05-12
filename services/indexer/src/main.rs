@@ -82,6 +82,9 @@ struct HealthResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::from_path("services/indexer/.env").ok();
+    let websocket_url = env::var("SOLANA_WEBSOCKET_URL").unwrap_or_else(|_| DEFAULT_WEBSOCKET_URL.to_string());
+
     let database_path = resolve_database_path();
     let pool = init_database(&database_path).await?;
     spawn_http_server(pool.clone());
@@ -95,9 +98,9 @@ async fn main() -> Result<()> {
     let max_retry_delay = Duration::from_secs(60);
 
     loop {
-        println!("连接 Solana 日志流：{DEFAULT_WEBSOCKET_URL}");
+        println!("连接 Solana 日志流：{websocket_url}");
 
-        match run_subscription_loop(&pool).await {
+        match run_subscription_loop(&pool, &websocket_url).await {
             Ok(()) => {
                 println!("日志订阅正常结束，准备重连...");
                 retry_delay = Duration::from_secs(1);
@@ -112,14 +115,14 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_subscription_loop(pool: &SqlitePool) -> Result<()> {
+async fn run_subscription_loop(pool: &SqlitePool, websocket_url: &str) -> Result<()> {
     let filter = RpcTransactionLogsFilter::Mentions(vec![BLINK_PROOF_PROGRAM_ID.to_string()]);
     let config = RpcTransactionLogsConfig {
         commitment: Some(CommitmentConfig::confirmed()),
     };
 
     let (_subscription, receiver) =
-        PubsubClient::logs_subscribe(DEFAULT_WEBSOCKET_URL, filter, config)
+        PubsubClient::logs_subscribe(websocket_url, filter, config)
             .context("failed to subscribe to blink_proof logs")?;
     println!("开始监听 blink_proof 存证事件：{BLINK_PROOF_PROGRAM_ID}");
 
@@ -146,8 +149,10 @@ async fn run_subscription_loop(pool: &SqlitePool) -> Result<()> {
     }
 }
 
-async fn backfill_historical_events(_pool: &SqlitePool) -> Result<()> {
+async fn backfill_historical_events(pool: &SqlitePool) -> Result<()> {
+    println!("检查是否需要历史事件回填...");
     let rpc_url = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| DEFAULT_RPC_URL.to_string());
+    let rpc = solana_client::rpc_client::RpcClient::new(rpc_url.to_string());
     println!("历史事件回填暂不支持当前 RPC 兼容层，跳过本轮回填：{rpc_url}");
     Ok(())
 }

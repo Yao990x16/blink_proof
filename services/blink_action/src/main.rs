@@ -2,6 +2,8 @@ mod action_types;
 mod blinkproof;
 mod phash;
 
+use dotenv::dotenv;
+
 use std::{
     collections::HashMap,
     env,
@@ -118,6 +120,9 @@ enum VerificationMatch {
 
 #[tokio::main]
 async fn main() {
+    // 强制从服务目录下加载 .env，防止在 workspace 根目录运行找不到文件
+    dotenv::from_path("services/blink_action/.env").ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             env::var("RUST_LOG").unwrap_or_else(|_| "blink_action=info,tower_http=info".into()),

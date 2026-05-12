@@ -5,10 +5,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+dotenv = "0.15"
 axum = "0.8"
 base64 = "0.22"
 bincode = "1.3"
 image = "0.25"
+image_0_23 = { package = "image", version = "0.23", features = ["png", "jpeg"] }
 img_hash = "3.2"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
