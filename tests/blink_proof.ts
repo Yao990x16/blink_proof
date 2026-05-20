@@ -57,6 +57,9 @@ describe("blink_proof", () => {
   const program = anchor.workspace.blinkProof as Program<BlinkProof>;
   const maxDepth = 14;
   const maxBufferSize = 64;
+  // canopyDepth = 0: no canopy caching; keeps test setup simple and cheap.
+  // If verify_content is ever exercised on-chain, consider canopyDepth = 10
+  // (only 4 proof accounts needed instead of 14), but the tree must be re-initialised.
   const canopyDepth = 0;
 
   async function createInitializedTree() {

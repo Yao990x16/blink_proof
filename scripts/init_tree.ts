@@ -27,6 +27,10 @@ async function main() {
   const program = anchor.workspace.blinkProof as Program<BlinkProof>;
   const maxDepth = 14;
   const maxBufferSize = 64;
+  // canopyDepth = 0: 不缓存树节点，节省 rent 成本，但每次调用 verify_content
+  // 时需要传递完整的 maxDepth（14）层 proof path（14 个 remaining_accounts，448 bytes）。
+  // 若未来接入链上 verify_content 指令，建议改为 canopyDepth = 10，
+  // 届时只需 4 层 proof，同时需重新初始化树并更新 .env 中的 BLINK_MERKLE_TREE。
   const canopyDepth = 0;
 
   const merkleTree = anchor.web3.Keypair.generate();

@@ -243,6 +243,22 @@
       // Initial Call
       updateUI();
     </script>
+    <script>
+      /**
+       * BlinkProof 运行时配置。
+       * 部署时修改此处即可切换目标网络，无需改动 app.js / wallet.js 源码。
+       *
+       * solanaCluster 可选值：
+       *   'mainnet-beta' | 'devnet' | 'testnet' | 'custom'
+       * 当 solanaCluster === 'custom' 时，solanaRpcUrl 同时作为 Explorer 的 customUrl 参数。
+       */
+      window.BLINKPROOF_CONFIG = {
+        blinkActionBase: "http://localhost:3000",
+        indexerBase:     "http://localhost:3001",
+        solanaRpcUrl:    "http://127.0.0.1:8899",
+        solanaCluster:   "custom",
+      };
+    </script>
     <script type="module" src="js/app.js"></script>
   </body>
 </html>

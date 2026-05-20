@@ -12,6 +12,7 @@ base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 solana-client = "2"
 solana-sdk = "2"
+solana-transaction-status = "2"
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 tower-http = { version = "0.5", features = ["cors"] }

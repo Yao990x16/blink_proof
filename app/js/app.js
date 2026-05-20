@@ -5,8 +5,9 @@ import {
   signAndSendTransaction,
 } from "./wallet.js";
 
-const BLINK_ACTION_BASE = "http://localhost:3000";
-const INDEXER_BASE = "http://localhost:3001";
+const cfg = window.BLINKPROOF_CONFIG ?? {};
+const BLINK_ACTION_BASE = cfg.blinkActionBase ?? "http://localhost:3000";
+const INDEXER_BASE      = cfg.indexerBase     ?? "http://localhost:3001";
 const STATS_REFRESH_MS = 30_000;
 
 const state = {
@@ -214,7 +215,11 @@ async function signPendingTransaction() {
 
   try {
     const signature = await signAndSendTransaction(state.pendingTransaction);
-    const link = `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http%3A%2F%2F127.0.0.1%3A8899`;
+    const cluster = cfg.solanaCluster ?? "custom";
+    const rpcParam = cluster === "custom"
+      ? `&customUrl=${encodeURIComponent(cfg.solanaRpcUrl ?? "http://127.0.0.1:8899")}`
+      : "";
+    const link = `https://explorer.solana.com/tx/${signature}?cluster=${cluster}${rpcParam}`;
     showResult("success", "✅", state.i18n['tx-submitted-title'] || "Transaction Submitted", `Signature: ${signature}`, [
       evidenceLink(state.i18n['btn-view-evidence'] || "View Evidence", link),
     ]);

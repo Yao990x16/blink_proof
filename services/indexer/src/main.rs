@@ -1,9 +1,11 @@
 use std::{
+    collections::HashMap,
     env, fs,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
-    time::Duration,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use anchor_lang::{
@@ -12,7 +14,7 @@ use anchor_lang::{
 };
 use anyhow::{Context, Result};
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, Query, State},
     http::{header::CONTENT_TYPE, Method, StatusCode},
     response::Html,
     routing::get,
@@ -38,6 +40,8 @@ const DEFAULT_HTTP_BIND_ADDR: &str = "0.0.0.0:3001";
 const DEFAULT_DATABASE_PATH_FROM_WORKSPACE: &str = "services/indexer/hashes.db";
 const DEFAULT_DATABASE_PATH_FROM_SERVICE: &str = "hashes.db";
 const CONTENT_REGISTERED_DISCRIMINATOR: [u8; 8] = [234, 59, 220, 137, 21, 89, 2, 148];
+const RATE_LIMIT_REQUESTS: u32 = 30;
+const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
 #[derive(Debug, AnchorDeserialize)]
 struct ContentRegistered {
@@ -50,6 +54,34 @@ struct ContentRegistered {
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
+    rate_limiter: Arc<RateLimiter>,
+}
+
+struct RateLimiter {
+    buckets: Mutex<HashMap<String, (Instant, u32)>>,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn check(&self, key: &str) -> bool {
+        let mut buckets = self.buckets.lock().unwrap();
+        let now = Instant::now();
+        let entry = buckets.entry(key.to_string()).or_insert((now, 0));
+        if now.duration_since(entry.0).as_secs() >= RATE_LIMIT_WINDOW_SECS {
+            *entry = (now, 1);
+            return true;
+        }
+        if entry.1 >= RATE_LIMIT_REQUESTS {
+            return false;
+        }
+        entry.1 += 1;
+        true
+    }
 }
 
 #[derive(Serialize)]
@@ -80,6 +112,16 @@ struct HealthResponse {
     database: bool,
 }
 
+/// Response for GET /lookup?fingerprint=<hex-encoded salted_fingerprint>
+#[derive(Serialize)]
+struct LookupResponse {
+    found: bool,
+    /// Approximate leaf index (rowid - 1). Accurate only if no rows were deleted.
+    leaf_index: Option<i64>,
+    creator: Option<String>,
+    timestamp: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::from_path("services/indexer/.env").ok();
@@ -87,7 +129,7 @@ async fn main() -> Result<()> {
 
     let database_path = resolve_database_path();
     let pool = init_database(&database_path).await?;
-    spawn_http_server(pool.clone());
+    spawn_http_server(pool.clone(), Arc::new(RateLimiter::new()));
 
     println!("SQLite 本地库：{}", database_path.display());
     if let Err(error) = backfill_historical_events(&pool).await {
@@ -150,22 +192,128 @@ async fn run_subscription_loop(pool: &SqlitePool, websocket_url: &str) -> Result
 }
 
 async fn backfill_historical_events(pool: &SqlitePool) -> Result<()> {
+    use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
+    use solana_sdk::{pubkey::Pubkey, signature::Signature};
+    use std::str::FromStr;
+
     println!("检查是否需要历史事件回填...");
     let rpc_url = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| DEFAULT_RPC_URL.to_string());
-    let rpc = solana_client::rpc_client::RpcClient::new(rpc_url.to_string());
-    println!("历史事件回填暂不支持当前 RPC 兼容层，跳过本轮回填：{rpc_url}");
+
+    // Phase 1 — blocking RPC calls: collect all missed events without .await.
+    // spawn_blocking runs on a dedicated thread-pool, so long RPC calls won't
+    // starve the async runtime.
+    let rpc_url_clone = rpc_url.clone();
+    let events: Vec<ContentRegistered> =
+        tokio::task::spawn_blocking(move || -> Vec<ContentRegistered> {
+            let rpc = solana_client::rpc_client::RpcClient::new_with_commitment(
+                rpc_url_clone,
+                CommitmentConfig::confirmed(),
+            );
+
+            let program_id = match Pubkey::from_str(BLINK_PROOF_PROGRAM_ID) {
+                Ok(pk) => pk,
+                Err(err) => {
+                    eprintln!("回填跳过：无法解析 program ID：{err}");
+                    return vec![];
+                }
+            };
+
+            // Pull up to 1000 recent signatures.
+            let config = GetConfirmedSignaturesForAddress2Config {
+                limit: Some(1000),
+                commitment: Some(CommitmentConfig::confirmed()),
+                ..Default::default()
+            };
+
+            let signatures =
+                match rpc.get_signatures_for_address_with_config(&program_id, config) {
+                    Ok(sigs) => sigs,
+                    Err(err) => {
+                        // Local Surfpool may not support this method; degrade gracefully.
+                        println!("历史回填跳过（RPC 不支持 getSignaturesForAddress）：{err}");
+                        return vec![];
+                    }
+                };
+
+            println!("获取到 {} 条历史签名，开始解析...", signatures.len());
+            let mut collected: Vec<ContentRegistered> = Vec::new();
+
+            // Process from oldest to newest so DB write order is chronological.
+            for sig_info in signatures.iter().rev() {
+                if sig_info.err.is_some() {
+                    continue;
+                }
+                let sig = match Signature::from_str(&sig_info.signature) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let tx = match rpc.get_transaction_with_config(
+                    &sig,
+                    solana_client::rpc_config::RpcTransactionConfig {
+                        encoding: Some(
+                            solana_transaction_status::UiTransactionEncoding::Base64,
+                        ),
+                        commitment: Some(CommitmentConfig::confirmed()),
+                        max_supported_transaction_version: Some(0),
+                    },
+                ) {
+                    Ok(tx) => tx,
+                    Err(_) => continue, // Pruned or unavailable; skip.
+                };
+
+                let logs: Vec<String> = tx
+                    .transaction
+                    .meta
+                    .and_then(|m| m.log_messages.into())
+                    .unwrap_or_default();
+
+                collected.extend(parse_content_registered_events(&logs));
+            }
+            collected
+        })
+        .await
+        .unwrap_or_default();
+
+    // Phase 2 — async DB writes: run in the outer async context where .await is allowed.
+    let mut backfilled = 0usize;
+    for event in &events {
+        // Skip fingerprints already in the DB to avoid double-counting on restart.
+        let already_indexed: bool = sqlx::query(
+            "SELECT 1 FROM registered_content WHERE salted_fingerprint = ?1 LIMIT 1",
+        )
+        .bind(event.salted_fingerprint.to_vec())
+        .fetch_optional(pool)
+        .await
+        .map(|r| r.is_some())
+        .unwrap_or(false);
+
+        if !already_indexed {
+            if let Err(err) = upsert_registered_content(pool, event).await {
+                eprintln!("回填写入失败（跳过）：{err:#}");
+            } else {
+                backfilled += 1;
+                println!(
+                    "回填存证：{} 已写入本地库",
+                    short_hex(&event.salted_fingerprint)
+                );
+            }
+        }
+    }
+
+    println!("历史事件回填完成，共补录 {backfilled} 条存证记录。");
     Ok(())
 }
 
-fn spawn_http_server(pool: SqlitePool) {
+
+fn spawn_http_server(pool: SqlitePool, rate_limiter: Arc<RateLimiter>) {
     tokio::spawn(async move {
-        if let Err(error) = run_http_server(pool).await {
+        if let Err(error) = run_http_server(pool, rate_limiter).await {
             eprintln!("Indexer HTTP server exited: {error:#}");
         }
     });
 }
 
-async fn run_http_server(pool: SqlitePool) -> Result<()> {
+async fn run_http_server(pool: SqlitePool, rate_limiter: Arc<RateLimiter>) -> Result<()> {
     let bind_addr = env::var("BLINK_INDEXER_HTTP_ADDR")
         .unwrap_or_else(|_| DEFAULT_HTTP_BIND_ADDR.to_string())
         .parse::<SocketAddr>()
@@ -179,8 +327,11 @@ async fn run_http_server(pool: SqlitePool) -> Result<()> {
         .route("/", get(index_dashboard))
         .route("/health", get(health_check))
         .route("/stats", get(get_stats))
-        .with_state(AppState { pool })
-        .layer(cors);
+        .route("/lookup", get(lookup_fingerprint))
+        .with_state(AppState { pool, rate_limiter })
+        .layer(cors)
+        // Enable ConnectInfo so handlers can read the client socket address.
+        .into_make_service_with_connect_info::<SocketAddr>();
 
     println!("Indexer HTTP 看板：http://{bind_addr}");
 
@@ -301,14 +452,22 @@ async fn backfill_raw_phash_int(pool: &SqlitePool) -> Result<()> {
 }
 
 async fn get_stats(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> std::result::Result<Json<StatsResponse>, (StatusCode, String)> {
+    if !state.rate_limiter.check(&addr.ip().to_string()) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate limit exceeded".to_string(),
+        ));
+    }
     load_stats(&state.pool)
         .await
         .map(Json)
         .map_err(internal_error)
 }
 
+// /health is intentionally left unrestricted so uptime monitors are never blocked.
 async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
     let db_ok = sqlx::query("SELECT 1").fetch_one(&state.pool).await.is_ok();
 
@@ -319,11 +478,88 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
 }
 
 async fn index_dashboard(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> std::result::Result<Html<String>, (StatusCode, String)> {
+    if !state.rate_limiter.check(&addr.ip().to_string()) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate limit exceeded".to_string(),
+        ));
+    }
     let stats = load_stats(&state.pool).await.map_err(internal_error)?;
     Ok(Html(render_dashboard(&stats)))
 }
+
+/// GET /lookup?fingerprint=<hex-encoded 32-byte salted_fingerprint>
+///
+/// Returns the indexed record for the given fingerprint, including an approximate
+/// leaf_index that a future `verify_content` call would need. Rate-limited.
+async fn lookup_fingerprint(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<LookupResponse> {
+    if !state.rate_limiter.check(&addr.ip().to_string()) {
+        return Json(LookupResponse {
+            found: false,
+            leaf_index: None,
+            creator: None,
+            timestamp: None,
+        });
+    }
+
+    let hex = params.get("fingerprint").cloned().unwrap_or_default();
+    // Accept 64-char hex (32 bytes). Return not-found for malformed input.
+    let fingerprint: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect();
+
+    if fingerprint.len() != 32 {
+        return Json(LookupResponse {
+            found: false,
+            leaf_index: None,
+            creator: None,
+            timestamp: None,
+        });
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT id, creator, timestamp
+        FROM registered_content
+        WHERE salted_fingerprint = ?1
+        LIMIT 1
+        "#,
+    )
+    .bind(fingerprint)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    match row {
+        Some(row) => {
+            let id = row.get::<i64, _>("id");
+            Json(LookupResponse {
+                found: true,
+                // rowid is 1-based; leaf_index in the Merkle tree is 0-based.
+                // This approximation is valid as long as no rows have been deleted.
+                leaf_index: Some(id - 1),
+                creator: Some(row.get("creator")),
+                timestamp: Some(row.get("timestamp")),
+            })
+        }
+        None => Json(LookupResponse {
+            found: false,
+            leaf_index: None,
+            creator: None,
+            timestamp: None,
+        }),
+    }
+}
+
 
 async fn load_stats(pool: &SqlitePool) -> Result<StatsResponse> {
     let total_fingerprints = sqlx::query("SELECT COUNT(*) AS count FROM registered_content")

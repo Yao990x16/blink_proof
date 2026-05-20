@@ -74,6 +74,12 @@ fn build_register_content_data(salted_fingerprint: [u8; 32], raw_phash: [u8; 8])
     data
 }
 
+/// Compute the Anchor instruction discriminator for the given instruction name.
+///
+/// Anchor defines the discriminator as: `SHA-256("global:<ix_name>")[..8]`
+/// `solana_sdk::hash::hash()` wraps SHA-256 internally, so the result is
+/// identical to what Anchor generates at compile time. This is verified by
+/// matching the on-chain program's IDL-derived discriminators.
 fn anchor_instruction_discriminator(name: &str) -> [u8; 8] {
     let preimage = format!("global:{name}");
     let digest = hash(preimage.as_bytes()).to_bytes();

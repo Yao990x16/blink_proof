@@ -30,7 +30,8 @@ export async function signAndSendTransaction(base64Transaction) {
     char.charCodeAt(0),
   );
   const transaction = window.solanaWeb3.Transaction.from(bytes);
-  const connection = new window.solanaWeb3.Connection("https://api.devnet.solana.com", "confirmed");
+  const rpcUrl = window.BLINKPROOF_CONFIG?.solanaRpcUrl ?? "http://127.0.0.1:8899";
+  const connection = new window.solanaWeb3.Connection(rpcUrl, "confirmed");
 
   if (!window.solana?.isPhantom) {
     throw new Error("请安装 Phantom 钱包");
